@@ -2,6 +2,8 @@ import streamlit as st
 from google import genai
 from google.genai import types
 from prompts import SYSTEM_PROMPT, WELCOME_MESSAGE_TEMPLATE
+import smtplib
+from email.message import EmailMessage
 
 MODEL_NAME = "gemini-3.5-flash-lite"
 
@@ -11,6 +13,8 @@ st.set_page_config(
 )
 
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+EMAIL_ADDRESS = st.secrets["EMAIL_ADDRESS"]
+EMAIL_APP_PASSWORD = st.secrets["EMAIL_APP_PASSWORD"]
 
 
 @st.cache_resource
@@ -48,36 +52,67 @@ def ask_gemini(parts):
         return f"Sorry, something went wrong: {error}"
 
 
+def send_email(recipient_email, name, summary):
+    try:
+        message = EmailMessage()
+
+        message["Subject"] = "🥗 MacroSnap - Your Meal Summary"
+        message["From"] = EMAIL_ADDRESS
+        message["To"] = recipient_email
+
+        message.set_content(
+            f"""Hi {name},
+
+Here is your MacroSnap meal summary:
+
+{summary}
+
+Keep tracking your meals with MacroSnap! 🥗
+"""
+        )
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(EMAIL_ADDRESS, EMAIL_APP_PASSWORD)
+            server.send_message(message)
+
+        return True
+
+    except Exception as error:
+        st.error(f"Could not send email: {error}")
+        return False
+
+
 # ---------------- ONBOARDING ----------------
 
 if "onboarded" not in st.session_state:
 
     st.title("🥗 MacroSnap")
-    st.caption("Snap it. Track it. Text yourself the results.")
+    st.caption("Snap it. Track it. Email yourself the results.")
 
     with st.form("onboarding_form"):
 
         name = st.text_input("Your name")
 
-        whatsapp_number = st.text_input(
-            "WhatsApp number (with country code)",
-            placeholder="+91XXXXXXXXXX"
+        email = st.text_input(
+            "Your email address",
+            placeholder="example@gmail.com"
         )
 
         submitted = st.form_submit_button("Let's go 🚀")
 
         if submitted:
 
-            if not name.strip() or not whatsapp_number.strip():
+            if not name.strip() or not email.strip():
 
                 st.warning(
-                    "Please fill in both your name and WhatsApp number."
+                    "Please fill in both your name and email address."
                 )
 
             else:
 
                 st.session_state.name = name.strip()
-                st.session_state.whatsapp_number = whatsapp_number.strip()
+                st.session_state.email = email.strip()
 
                 st.session_state.chat = gemini_client.chats.create(
                     model=MODEL_NAME,
@@ -177,3 +212,40 @@ if user_input:
         "text",
         answer
     )
+
+
+# ---------------- EMAIL SUMMARY ----------------
+
+st.divider()
+
+st.subheader("📧 Email Your Summary")
+
+if st.button("Send Summary to My Email"):
+
+    summary = ""
+
+    for message in st.session_state.messages:
+
+        if message["role"] == "assistant" and message["kind"] == "text":
+            summary += message["content"] + "\n\n"
+
+    if summary.strip():
+
+        with st.spinner("Sending email..."):
+
+            success = send_email(
+                st.session_state.email,
+                st.session_state.name,
+                summary
+            )
+
+        if success:
+            st.success(
+                f"Summary sent successfully to {st.session_state.email}!"
+            )
+
+    else:
+
+        st.warning(
+            "There is no meal summary to send yet. Ask MacroSnap about a meal first."
+        )
